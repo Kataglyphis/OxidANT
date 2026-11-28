@@ -41,6 +41,8 @@ pub(super) struct StreamedTexture {
     /// Every chain level's size and byte count, kept when the chain itself is dropped.
     sizes: Vec<(u32, u32)>,
     level_bytes: Vec<u64>,
+    /// The chain's own bytes, which holding or rebuilding it costs; the levels it shares with the image are free.
+    owned_bytes: u64,
     /// Levels that can be the texture's level 0, finest first.
     pub(super) candidates: Vec<usize>,
     /// The upload's base: eviction never drops past it.
@@ -87,6 +89,7 @@ impl StreamedTexture {
             source,
             format: chain.format,
             level_bytes: chain.levels.iter().map(|l| l.data.len() as u64).collect(),
+            owned_bytes: chain.owned_bytes(),
             sizes,
             candidates,
             tail,
@@ -117,9 +120,13 @@ impl StreamedTexture {
         self.level_bytes[level..].iter().sum()
     }
 
-    /// Bytes of the CPU chain this texture holds.
+    /// Bytes of the CPU chain this texture holds that the scene's image does not hold already.
     pub(super) fn cpu_bytes(&self) -> u64 {
-        self.chain.as_ref().map_or(0, |chain| chain.bytes_from(0))
+        if self.chain.is_some() {
+            self.owned_bytes
+        } else {
+            0
+        }
     }
 
     pub(super) fn drop_chain(&mut self) {
@@ -135,7 +142,7 @@ impl StreamedTexture {
     pub(super) fn step_bytes(&self, base: usize, gpu_copies: bool) -> u64 {
         let needs_chain = !self.copies(gpu_copies) || base < self.base;
         let rebuild = if needs_chain && self.chain.is_none() {
-            self.bytes_from(0)
+            self.owned_bytes
         } else {
             0
         };

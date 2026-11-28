@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use crate::asset::basis::{basis_target, retarget_basis, rgba8_levels as basis_rgba8_levels};
-use crate::asset::bc_decode::decode_level;
 use crate::context::GpuContext;
 use crate::render::texture_stream::{ChainLevel, LevelBytes, LevelChain};
 use crate::scene::{CompressedFormat, CompressedTexture, CpuSampler, CpuTexture, CpuWrap};
@@ -48,7 +47,7 @@ pub(crate) fn anisotropy_for(desc: &CpuSampler) -> u16 {
 }
 
 // The chain both renderers build, so the C++ engine's levels are this renderer's.
-use kataglyphis_assets::levels::{first_block_base, mips_below_base};
+use kataglyphis_assets::levels::{completed_levels, decoded_levels, mips_below_base, BlockSupport};
 pub(crate) use kataglyphis_assets::levels::{linear_to_srgb, srgb_to_linear};
 
 pub(crate) fn compressed_wgpu_format(format: CompressedFormat, srgb: bool) -> wgpu::TextureFormat {
@@ -211,19 +210,17 @@ pub(crate) fn copy_level(
 
 /// Why a block-compressed payload cannot become a valid wgpu texture, or `None` when it can.
 fn compressed_upload_problem(
-    gpu: &GpuContext,
+    blocks: &BlockSupport,
     texture: &CpuTexture,
     compressed: &CompressedTexture,
 ) -> Option<String> {
     use CompressedFormat as F;
-    let (sampled, family) = match compressed.format {
-        F::Bc1RgbaUnorm | F::Bc3RgbaUnorm | F::Bc5RgUnorm | F::Bc7RgbaUnorm => {
-            (gpu.supports_bc, "BC")
-        }
-        F::Etc2Rgba8Unorm => (gpu.supports_etc2, "ETC2"),
-        F::Astc4x4RgbaUnorm => (gpu.supports_astc, "ASTC"),
+    let family = match compressed.format {
+        F::Bc1RgbaUnorm | F::Bc3RgbaUnorm | F::Bc5RgUnorm | F::Bc7RgbaUnorm => "BC",
+        F::Etc2Rgba8Unorm => "ETC2",
+        F::Astc4x4RgbaUnorm => "ASTC",
     };
-    if !sampled {
+    if !blocks.samples(compressed.format) {
         return Some(format!("the adapter has no {family} support"));
     }
     // WebGPU requires a block-compressed texture's base to be whole 4x4 blocks.
@@ -242,16 +239,13 @@ fn compressed_upload_problem(
         return Some(err.to_string());
     }
     // A finer level past the device's side is skipped, as the C++ engine's upload does; only none to start from decodes.
-    let max_side = gpu.device.limits().max_texture_dimension_2d;
     let levels = compressed.mips.len() as u32;
-    first_block_base(texture.width, texture.height, levels, max_side)
-        .is_none()
-        .then(|| {
-            format!(
-                "none of its {}x{} levels fits the device's {max_side}-texel side as whole blocks",
-                texture.width, texture.height
-            )
-        })
+    (!blocks.uploads_blocks(compressed.format, texture.width, texture.height, levels)).then(|| {
+        format!(
+            "none of its {}x{} levels fits the device's {}-texel side as whole blocks",
+            texture.width, texture.height, blocks.max_side
+        )
+    })
 }
 
 /// An uncompressed texture with its whole mip chain behind the default view.
@@ -280,6 +274,16 @@ pub(crate) fn material_view(texture: &wgpu::Texture, sampler: &CpuSampler) -> wg
     })
 }
 
+/// The block formats `gpu` samples and its longest texture side, the C++ engine's `BlockSupport` for this adapter.
+fn block_support(gpu: &GpuContext) -> BlockSupport {
+    BlockSupport {
+        bc: gpu.supports_bc,
+        etc2: gpu.supports_etc2,
+        astc: gpu.supports_astc,
+        max_side: gpu.device.limits().max_texture_dimension_2d,
+    }
+}
+
 /// A material texture's chain as this adapter uploads it, decoding a BCn payload the device refuses; `None` if even that fails.
 /// Its levels share the image's base or stored blocks rather than copy them.
 pub(crate) fn material_chain(
@@ -288,13 +292,23 @@ pub(crate) fn material_chain(
     srgb: bool,
     label: Option<&str>,
 ) -> Option<LevelChain> {
+    material_chain_for(&block_support(gpu), texture, srgb, label)
+}
+
+/// [`material_chain`] for an adapter that samples `blocks`: the levels `levels::ktx2_chain` hands the C++ engine.
+fn material_chain_for(
+    blocks: &BlockSupport,
+    texture: &Arc<CpuTexture>,
+    srgb: bool,
+    label: Option<&str>,
+) -> Option<LevelChain> {
     let Some(compressed) = texture.compressed.as_ref() else {
         return Some(rgba8_chain(texture, srgb));
     };
-    if let Some(chain) = retargeted_basis_chain(gpu, texture, compressed, srgb, label) {
+    if let Some(chain) = retargeted_basis_chain(blocks, texture, compressed, srgb, label) {
         return Some(chain);
     }
-    let Some(problem) = compressed_upload_problem(gpu, texture, compressed) else {
+    let Some(problem) = compressed_upload_problem(blocks, texture, compressed) else {
         warn_declared_colour_space(compressed, srgb, label);
         let mips = (0..compressed.mips.len())
             .map(|level| LevelBytes::Stored(Arc::clone(texture), level))
@@ -306,57 +320,49 @@ pub(crate) fn material_chain(
         log::info!("{name}: Basis transcoded straight to RGBA8: {problem}");
         return Some(chain);
     }
-    let Some(levels) = decoded_levels(texture, compressed) else {
+    let levels = decoded_levels(texture.width, texture.height, compressed);
+    if levels.is_empty() {
         log::warn!("{name}: block-compressed texture ({problem}) does not decode; the slot keeps its default");
         return None;
-    };
+    }
     log::info!("{name}: block-compressed texture decoded on the CPU: {problem}");
     // BC5 has no sRGB variant, so the adapter's own decode would read it linear whatever the slot.
-    let srgb = compressed_wgpu_format(compressed.format, srgb).is_srgb();
-    let max_side = gpu.device.limits().max_texture_dimension_2d;
-    if texture.width > max_side || texture.height > max_side {
-        // The decoded chain may stop short of the side limit; the base's own mips reach 1x1.
-        let base = levels.into_iter().next().map(|(_, _, rgba8)| rgba8)?;
-        let decoded = CpuTexture {
-            width: texture.width,
-            height: texture.height,
-            rgba8: base,
-            compressed: None,
-        };
-        return Some(rgba8_chain(&Arc::new(decoded), srgb));
-    }
-    Some(rgba8_levels(levels, srgb))
+    let srgb = srgb && compressed.format.has_srgb();
+    // The levels that decode, completed to 1x1: a level past the device's side is no base candidate.
+    Some(rgba8_levels(
+        completed_levels(texture.width, texture.height, levels, srgb),
+        srgb,
+    ))
 }
 
-/// A Basis payload no block format of this adapter takes, transcoded straight to RGBA8 as the C++ engine's loader does,
-/// not decoded from its BC7; `None` for any other payload or a failed transcode.
+/// A Basis payload no block format of this adapter takes, its own levels transcoded straight to RGBA8 and completed to
+/// 1x1 as the C++ engine's loader does, not decoded from its BC7; `None` for any other payload or a failed transcode.
 fn straight_basis_chain(
     texture: &CpuTexture,
     compressed: &CompressedTexture,
     srgb: bool,
 ) -> Option<LevelChain> {
     let levels = basis_rgba8_levels(compressed.basis_source.as_ref()?).ok()?;
-    let sized = levels
-        .into_iter()
-        .zip(0u32..)
-        .map(|(rgba8, level)| {
-            let (w, h) =
-                kataglyphis_assets::levels::level_size(texture.width, texture.height, level);
-            (w, h, rgba8)
-        })
-        .collect();
-    Some(rgba8_levels(sized, srgb))
+    Some(rgba8_levels(
+        completed_levels(texture.width, texture.height, levels, srgb),
+        srgb,
+    ))
 }
 
 /// A Basis payload retargeted for an adapter with ETC2 or ASTC but no BC; `None` leaves the BC7 path to decide.
 fn retargeted_basis_chain(
-    gpu: &GpuContext,
+    blocks: &BlockSupport,
     texture: &CpuTexture,
     compressed: &CompressedTexture,
     srgb: bool,
     label: Option<&str>,
 ) -> Option<LevelChain> {
-    let target = basis_target(gpu.supports_bc, gpu.supports_etc2, gpu.supports_astc)?;
+    let target = basis_target(blocks.bc, blocks.etc2, blocks.astc)?;
+    // A base of partial blocks, or none within the side, goes straight to RGBA8 as in the C++ engine's loader.
+    let levels = compressed.mips.len() as u32;
+    if !blocks.uploads_blocks(target, texture.width, texture.height, levels) {
+        return None;
+    }
     let name = label.unwrap_or("<unlabeled texture>");
     let retargeted = match retarget_basis(compressed, target)? {
         Ok(retargeted) => retargeted,
@@ -365,7 +371,7 @@ fn retargeted_basis_chain(
             return None;
         }
     };
-    if let Some(problem) = compressed_upload_problem(gpu, texture, &retargeted) {
+    if let Some(problem) = compressed_upload_problem(blocks, texture, &retargeted) {
         log::warn!("{name}: Basis as {target:?} cannot upload ({problem}); falling back to BC7");
         return None;
     }
@@ -373,26 +379,6 @@ fn retargeted_basis_chain(
     warn_declared_colour_space(&retargeted, srgb, label);
     let mips = retargeted.mips.into_iter().map(LevelBytes::Owned).collect();
     Some(compressed_chain(texture, retargeted.format, mips, srgb))
-}
-
-/// The payload's mip chain as RGBA8, up to its first level too short to decode; `None` if that is the base.
-fn decoded_levels(
-    texture: &CpuTexture,
-    compressed: &CompressedTexture,
-) -> Option<Vec<(u32, u32, Vec<u8>)>> {
-    let levels: Vec<_> = compressed
-        .mips
-        .iter()
-        .enumerate()
-        .map_while(|(level, data)| {
-            let (w, h) = (
-                (texture.width >> level).max(1),
-                (texture.height >> level).max(1),
-            );
-            decode_level(compressed.format, w, h, data).map(|rgba8| (w, h, rgba8))
-        })
-        .collect();
-    (!levels.is_empty()).then_some(levels)
 }
 
 /// The CPU box-filtered chain of an RGBA8 image, down to 1x1; level 0 is the image's own base.
@@ -519,6 +505,7 @@ pub(crate) fn create_2d_view(
 mod tests {
     use super::*;
     use crate::scene::CpuTexture;
+    use kataglyphis_assets::levels::{ktx2_chain, reads_srgb, ChainFormat};
 
     /// `rgba8_chain`'s levels as sizes and bytes.
     fn generate_mips(base: CpuTexture, srgb: bool) -> Vec<(u32, u32, Vec<u8>)> {
@@ -592,6 +579,182 @@ mod tests {
             straight_basis_chain(&stored_bc1, stored_bc1.compressed.as_ref().unwrap(), true)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn a_chain_owns_only_the_levels_it_built() {
+        let image = Arc::new(CpuTexture {
+            width: 8,
+            height: 8,
+            rgba8: vec![9; 8 * 8 * 4],
+            compressed: None,
+        });
+        let chain = rgba8_chain(&image, true);
+        assert_eq!(chain.bytes_from(0), 256 + 64 + 16 + 4);
+        assert_eq!(chain.owned_bytes(), 64 + 16 + 4, "the base is the image's");
+        let file = include_bytes!("../../../assets/tests/assets/green_uastc.ktx2");
+        let blocks = Arc::new(crate::asset::ktx2_loader::load_ktx2(file).unwrap());
+        let bc = BlockSupport {
+            bc: true,
+            ..BlockSupport::default()
+        };
+        let stored = material_chain_for(&bc, &blocks, true, None).unwrap();
+        assert!(stored.format.is_compressed());
+        assert_eq!(stored.owned_bytes(), 0, "every level is the image's");
+        let etc2 = BlockSupport {
+            etc2: true,
+            ..BlockSupport::default()
+        };
+        let retargeted = material_chain_for(&etc2, &blocks, true, None).unwrap();
+        assert_eq!(retargeted.owned_bytes(), retargeted.bytes_from(0));
+    }
+
+    /// The support sets a chain is checked under: none, each family, all, and BC whose side fits no whole block.
+    fn support_sets() -> Vec<BlockSupport> {
+        let none = BlockSupport::default();
+        vec![
+            none,
+            BlockSupport { bc: true, ..none },
+            BlockSupport { etc2: true, ..none },
+            BlockSupport { astc: true, ..none },
+            BlockSupport {
+                bc: true,
+                etc2: true,
+                astc: true,
+                max_side: 0,
+            },
+            BlockSupport {
+                bc: true,
+                max_side: 2,
+                ..none
+            },
+        ]
+    }
+
+    /// `chain`'s format as the C++ engine's chain names it, and each level's size and whole-block bytes.
+    fn as_texture_chain(chain: &LevelChain) -> (ChainFormat, Vec<(u32, u32, Vec<u8>)>) {
+        use CompressedFormat as F;
+        let format = if chain.format.is_compressed() {
+            let all = [
+                F::Bc1RgbaUnorm,
+                F::Bc3RgbaUnorm,
+                F::Bc5RgUnorm,
+                F::Bc7RgbaUnorm,
+                F::Etc2Rgba8Unorm,
+                F::Astc4x4RgbaUnorm,
+            ];
+            let same = |f: &F| {
+                compressed_wgpu_format(*f, false).remove_srgb_suffix()
+                    == chain.format.remove_srgb_suffix()
+            };
+            ChainFormat::Blocks(all.into_iter().find(same).unwrap())
+        } else {
+            ChainFormat::Rgba8
+        };
+        let levels = chain
+            .levels
+            .iter()
+            .map(|l| {
+                let bytes = format.level_bytes(l.width, l.height);
+                (l.width, l.height, l.data[..bytes].to_vec())
+            })
+            .collect();
+        (format, levels)
+    }
+
+    /// Every KTX2 fixture, under every support set: this renderer's chain is the one the C++ engine's loader hands over,
+    /// in the colour space the engine uploads it in.
+    #[test]
+    fn a_ktx2_chain_is_the_one_the_cpp_engine_s_loader_builds() {
+        let fixtures: [(&str, &[u8]); 6] = [
+            (
+                "red_bc1",
+                include_bytes!("../../../assets/tests/assets/red_bc1.ktx2"),
+            ),
+            (
+                "green_uastc",
+                include_bytes!("../../../assets/tests/assets/green_uastc.ktx2"),
+            ),
+            (
+                "ramp_uastc",
+                include_bytes!("../../../assets/tests/assets/ramp_uastc.ktx2"),
+            ),
+            (
+                "ramp_etc1s",
+                include_bytes!("../../../assets/tests/assets/ramp_etc1s.ktx2"),
+            ),
+            (
+                "rgb_levels_6x6_uastc",
+                include_bytes!("../../../assets/tests/assets/rgb_levels_6x6_uastc.ktx2"),
+            ),
+            // Its second level is no box filter of the first, so a decode past the side must keep the file's levels.
+            (
+                "rg_two_levels_bc5",
+                include_bytes!("../../../assets/tests/assets/rg_two_levels_bc5.ktx2"),
+            ),
+        ];
+        for (name, file) in fixtures {
+            let image = Arc::new(crate::asset::ktx2_loader::load_ktx2(file).unwrap());
+            for blocks in support_sets() {
+                for srgb in [false, true] {
+                    let ours = material_chain_for(&blocks, &image, srgb, Some(name)).unwrap();
+                    let theirs = ktx2_chain(file, srgb, &blocks).unwrap();
+                    let theirs_levels: Vec<_> = theirs
+                        .levels()
+                        .map(|(w, h, t)| (w, h, t.to_vec()))
+                        .collect();
+                    assert!(
+                        as_texture_chain(&ours) == (theirs.format, theirs_levels),
+                        "{name} under {blocks:?}, srgb {srgb}"
+                    );
+                    assert_eq!(
+                        ours.format.is_srgb(),
+                        reads_srgb(file, srgb),
+                        "{name} under {blocks:?}, srgb {srgb}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A short BC chain an adapter without BC decodes gets its missing levels by halving, down to 1x1.
+    #[test]
+    fn a_short_decoded_chain_is_completed_to_one_by_one() {
+        let file = include_bytes!("../../../assets/tests/assets/red_bc1.ktx2");
+        let image = Arc::new(crate::asset::ktx2_loader::load_ktx2(file).unwrap());
+        assert_eq!(image.compressed.as_ref().unwrap().mips.len(), 1);
+        let decoded = material_chain_for(&BlockSupport::default(), &image, true, None).unwrap();
+        let sizes: Vec<_> = decoded.levels.iter().map(|l| (l.width, l.height)).collect();
+        assert_eq!(sizes, [(8, 8), (4, 4), (2, 2), (1, 1)]);
+        let base = &decoded.levels[0].data[..4];
+        assert!(decoded.levels.iter().all(|l| &l.data[..4] == base));
+        let bc = BlockSupport {
+            bc: true,
+            ..BlockSupport::default()
+        };
+        let stored = material_chain_for(&bc, &image, true, None).unwrap();
+        assert_eq!(stored.levels.len(), 1, "blocks keep the file's one level");
+    }
+
+    /// A Basis base of partial blocks keeps the file's red, green and blue levels on every adapter, no box filter of red.
+    #[test]
+    fn a_partial_block_basis_base_keeps_the_file_s_levels() {
+        let file = include_bytes!("../../../assets/tests/assets/rgb_levels_6x6_uastc.ktx2");
+        let image = Arc::new(crate::asset::ktx2_loader::load_ktx2(file).unwrap());
+        for blocks in support_sets() {
+            let chain = material_chain_for(&blocks, &image, true, None).unwrap();
+            assert_eq!(
+                chain.format,
+                wgpu::TextureFormat::Rgba8UnormSrgb,
+                "{blocks:?}"
+            );
+            let firsts: Vec<_> = chain.levels.iter().map(|l| l.data[..4].to_vec()).collect();
+            assert_eq!(
+                firsts,
+                [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]],
+                "{blocks:?}"
+            );
+        }
     }
 
     #[test]

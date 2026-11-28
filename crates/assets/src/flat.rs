@@ -77,6 +77,7 @@ pub struct FlatTexture {
     pub chain: TextureChain,
     pub encoded: Vec<u8>,
     pub sampler: CpuSampler,
+    /// The colour space the chain reads in: the slot's, but linear for a BC5 KTX2 ([`levels::reads_srgb`]).
     pub srgb: bool,
 }
 
@@ -94,7 +95,7 @@ impl FlatTexture {
             chain,
             encoded,
             sampler,
-            srgb,
+            srgb: levels::reads_srgb(&stored.bytes, srgb),
         };
         match decode_chain(stored, srgb, budget, blocks) {
             Ok(Some(chain)) => Some(texture(chain, Vec::new())),
@@ -532,29 +533,28 @@ impl LocatedSlot {
     /// The first extension's image that loads, else (with a warning for each) the core one; `None` when none loads.
     fn decode(&self, budget: &Budget, blocks: &BlockSupport) -> Option<FlatTexture> {
         for (extension, (image, located)) in &self.preferred {
-            let chain = located
+            let texture = located
                 .as_ref()
                 .map_err(|err| anyhow::anyhow!("{err:#}"))
                 .and_then(LocatedImage::load)
-                .and_then(|stored| decode_chain(&stored, self.srgb, budget, blocks))
-                .and_then(|chain| {
-                    chain.with_context(|| {
-                        format!(
-                            "a {} image that is no {}",
-                            extension.name(),
-                            extension.format()
-                        )
-                    })
-                });
-            match chain {
-                Ok(chain) => {
-                    return Some(FlatTexture {
+                .and_then(|stored| {
+                    let chain =
+                        decode_chain(&stored, self.srgb, budget, blocks)?.with_context(|| {
+                            format!(
+                                "a {} image that is no {}",
+                                extension.name(),
+                                extension.format()
+                            )
+                        })?;
+                    Ok(FlatTexture {
                         chain,
                         encoded: Vec::new(),
                         sampler: self.sampler,
-                        srgb: self.srgb,
+                        srgb: levels::reads_srgb(&stored.bytes, self.srgb),
                     })
-                }
+                });
+            match texture {
+                Ok(texture) => return Some(texture),
                 Err(err) => log::warn!("glTF image {image} ({}): {err:#}", extension.format()),
             }
         }

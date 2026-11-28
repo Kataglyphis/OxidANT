@@ -257,20 +257,56 @@ pub fn box_filtered_chain(base: Vec<u8>, width: u32, height: u32, srgb: bool) ->
 /// The WebGPU renderer's levels below `base`'s RGBA8 base, each with its size, down to 1x1; the base stays the
 /// caller's, so a chain can share it instead of copying it. None for an empty or short base.
 pub fn mips_below_base(base: &CpuTexture, srgb: bool) -> Vec<(u32, u32, Vec<u8>)> {
-    let (width, height) = (base.width, base.height);
+    halvings_below(base.width, base.height, 0, &base.rgba8, srgb)
+}
+
+/// The levels below level `level` of a `width` x `height` RGBA8 chain, `texels`, each halved from the one above down
+/// to 1x1 as [`complete_chain`] halves them; none when `texels` is not that level's size.
+pub fn halvings_below(
+    width: u32,
+    height: u32,
+    level: u32,
+    texels: &[u8],
+    srgb: bool,
+) -> Vec<(u32, u32, Vec<u8>)> {
     let mut levels: Vec<(u32, u32, Vec<u8>)> = Vec::new();
-    if width == 0 || height == 0 || base.rgba8.len() != chain_bytes(width, height, 1) {
+    let (lw, lh) = level_size(width, height, level);
+    if width == 0 || height == 0 || texels.len() != chain_bytes(lw, lh, 1) {
         return levels;
     }
-    for level in 1..full_level_count(width, height) {
-        let (pw, ph) = level_size(width, height, level - 1);
-        let (nw, nh) = level_size(width, height, level);
+    for next_level in level + 1..full_level_count(width, height) {
+        let (pw, ph) = level_size(width, height, next_level - 1);
+        let (nw, nh) = level_size(width, height, next_level);
         let mut next = vec![0; (nw as usize) * (nh as usize) * 4];
-        let previous = levels
-            .last()
-            .map_or(base.rgba8.as_slice(), |(_, _, texels)| texels);
+        let previous = levels.last().map_or(texels, |(_, _, texels)| texels);
         halve(previous, pw, ph, &mut next, srgb);
         levels.push((nw, nh, next));
+    }
+    levels
+}
+
+/// `stored` RGBA8 levels of a `width` x `height` chain, each with its size, completed down to 1x1 by halving the last:
+/// [`complete_chain`]'s levels for a consumer that keeps them apart. A level of the wrong size stops the completion.
+pub fn completed_levels(
+    width: u32,
+    height: u32,
+    stored: Vec<Vec<u8>>,
+    srgb: bool,
+) -> Vec<(u32, u32, Vec<u8>)> {
+    let mut levels: Vec<(u32, u32, Vec<u8>)> = stored
+        .into_iter()
+        .zip(0..full_level_count(width, height))
+        .map(|(texels, level)| {
+            let (w, h) = level_size(width, height, level);
+            (w, h, texels)
+        })
+        .collect();
+    let whole = levels
+        .iter()
+        .all(|(w, h, texels)| texels.len() == chain_bytes(*w, *h, 1));
+    if let Some((_, _, last)) = levels.last().filter(|_| whole) {
+        let below = halvings_below(width, height, levels.len() as u32 - 1, last, srgb);
+        levels.extend(below);
     }
     levels
 }
@@ -308,8 +344,18 @@ pub fn ktx2_chain(bytes: &[u8], srgb: bool, blocks: &BlockSupport) -> anyhow::Re
     rgba8_chain(texture, srgb)
 }
 
+/// The colour space an image's chain reads in for a slot of `srgb`: the slot's, but linear for a KTX2 whose format has no
+/// sRGB variant (BC5), so its decode reads as a device sampling the blocks would.
+pub fn reads_srgb(bytes: &[u8], srgb: bool) -> bool {
+    srgb && ktx2::Reader::new(bytes)
+        .ok()
+        .and_then(|reader| crate::ktx2_loader::stored_format(&reader))
+        .is_none_or(CompressedFormat::has_srgb)
+}
+
 /// `texture`'s full RGBA8 chain: a decoded image box-filtered, a Basis payload transcoded level by level, BCn decoded up
-/// to its first level too short to decode, the rest halved from the last; an error when not even level 0 decodes.
+/// to its first level too short to decode, the rest halved from the last (linearly for BC5, as [`reads_srgb`] reads
+/// it); an error when not even level 0 decodes.
 pub fn rgba8_chain(texture: CpuTexture, srgb: bool) -> anyhow::Result<TextureChain> {
     let CpuTexture {
         width,
@@ -325,6 +371,7 @@ pub fn rgba8_chain(texture: CpuTexture, srgb: bool) -> anyhow::Result<TextureCha
         );
         return Ok(box_filtered_chain(rgba8, width, height, srgb));
     };
+    let srgb = srgb && compressed.format.has_srgb();
     let levels = match &compressed.basis_source {
         Some(source) => crate::basis::rgba8_levels(source)?,
         None => decoded_levels(width, height, &compressed),
@@ -355,7 +402,7 @@ fn pack(levels: &[Vec<u8>], width: u32, height: u32) -> Vec<u8> {
 }
 
 /// The BCn levels as RGBA8, up to the first one too short to decode or past a full chain.
-fn decoded_levels(width: u32, height: u32, compressed: &CompressedTexture) -> Vec<Vec<u8>> {
+pub fn decoded_levels(width: u32, height: u32, compressed: &CompressedTexture) -> Vec<Vec<u8>> {
     compressed
         .mips
         .iter()
@@ -528,6 +575,31 @@ mod tests {
         );
     }
 
+    /// 8x8 BC5, two of its four levels: a red checker over green 64, then over green 192.
+    const BC5: &[u8] = include_bytes!("../tests/assets/rg_two_levels_bc5.ktx2");
+
+    #[test]
+    fn a_decoded_bc5_reads_linear_whatever_the_slot() {
+        assert!(!reads_srgb(BC5, true), "BC5 has no sRGB variant");
+        assert!(reads_srgb(
+            include_bytes!("../tests/assets/red_bc1.ktx2"),
+            true
+        ));
+        assert!(reads_srgb(
+            include_bytes!("../tests/assets/green_uastc.ktx2"),
+            true
+        ));
+        assert!(reads_srgb(&[0x89, b'P', b'N', b'G'], true), "no KTX2");
+        assert!(!reads_srgb(&[0x89, b'P', b'N', b'G'], false));
+        let decoded = ktx2_chain(BC5, true, &BlockSupport::default()).unwrap();
+        let level_two = decoded.levels().nth(2).unwrap().2;
+        assert_eq!(
+            level_two[..4],
+            [128, 192, 0, 255],
+            "the checker halved linearly; in sRGB it would be 188"
+        );
+    }
+
     #[test]
     fn an_empty_or_short_image_is_an_error_not_a_panic() {
         assert!(rgba8_chain(image(0, 4, Vec::new()), false).is_err());
@@ -578,6 +650,36 @@ mod tests {
             (1, 4),
             "a 1x1 base is already full"
         );
+    }
+
+    #[test]
+    fn completed_levels_are_the_completed_chain_s_levels_kept_apart() {
+        let base: Vec<u8> = (0..12 * 6 * 4).map(|i| (i * 7 % 256) as u8).collect();
+        let second: Vec<u8> = (0..6 * 3 * 4).map(|i| (i * 13 % 256) as u8).collect();
+        for srgb in [false, true] {
+            let packed = complete_chain([base.clone(), second.clone()].concat(), 12, 6, 2, srgb);
+            let apart = completed_levels(12, 6, vec![base.clone(), second.clone()], srgb);
+            let packed: Vec<_> = packed
+                .levels()
+                .map(|(w, h, t)| (w, h, t.to_vec()))
+                .collect();
+            assert_eq!(apart, packed, "srgb {srgb}");
+            assert_eq!(apart.len(), 4, "12x6, 6x3, then 3x1 and 1x1 halved");
+        }
+        let short = completed_levels(8, 8, vec![vec![0; 8 * 8 * 4], vec![0; 3]], false);
+        assert_eq!(
+            short.iter().map(|(w, h, _)| (*w, *h)).collect::<Vec<_>>(),
+            [(8, 8), (4, 4)],
+            "a level of the wrong size is not halved from"
+        );
+        let past_full = completed_levels(2, 2, vec![vec![1; 16], vec![2; 4], vec![3; 4]], false);
+        assert_eq!(past_full.len(), 2, "no level past 1x1");
+        let below = halvings_below(8, 4, 1, &[255; 4 * 2 * 4], true);
+        assert_eq!(
+            below.iter().map(|(w, h, _)| (*w, *h)).collect::<Vec<_>>(),
+            [(2, 1), (1, 1)]
+        );
+        assert!(halvings_below(8, 4, 1, &[255; 3], true).is_empty());
     }
 
     #[test]

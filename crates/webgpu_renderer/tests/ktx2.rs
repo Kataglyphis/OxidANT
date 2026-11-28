@@ -331,6 +331,7 @@ fn random_blocks(format: CompressedFormat, count: usize) -> Vec<u8> {
 }
 
 /// The CPU decode is checked against the adapter's own: the same payload, with and without BC, draws the same.
+/// A full chain, so no level is halved where the adapter's blocks have none.
 #[test]
 fn the_cpu_decode_of_every_bc_format_draws_like_the_adapters_own() {
     let Some(mut gpu) = bc_gpu() else {
@@ -348,7 +349,9 @@ fn the_cpu_decode_of_every_bc_format_draws_like_the_adapters_own() {
             rgba8: Vec::new(),
             compressed: Some(CompressedTexture {
                 format,
-                mips: vec![random_blocks(format, 64)],
+                mips: [64, 16, 4, 1, 1, 1]
+                    .map(|blocks| random_blocks(format, blocks))
+                    .to_vec(),
                 declared_srgb: None,
                 basis_source: None,
             }),
@@ -636,6 +639,80 @@ fn an_ext_texture_webp_cube_draws_its_ramp() {
     assert!(
         red > 200 && green > 200 && blue > 200,
         "the ramp's red, green and blue corners must show, got {red}/{green}/{blue}"
+    );
+}
+
+/// A one-level BC1 KTX2 decoded without BC reaches the GPU as a chain halved down to 1x1; with BC as its one level.
+#[test]
+fn a_short_bc_chain_decoded_without_bc_reaches_the_gpu_completed() {
+    let Some(mut gpu) = bc_gpu() else {
+        return;
+    };
+    let scene = fixture_scene("cube_ktx2_bc1_one_level.gltf");
+    for (supports_bc, full_bytes) in [(true, 32), (false, 256 + 64 + 16 + 4)] {
+        gpu.supports_bc = supports_bc;
+        let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut renderer = ForwardRenderer::new(&gpu, 128, 128);
+        renderer.upload_scene(&gpu, &scene);
+        let pixels = renderer
+            .render_to_pixels(&gpu, 128, 128, &OrbitCamera::default())
+            .expect("render");
+        let error = pollster::block_on(scope.pop());
+        assert!(error.is_none(), "BC {supports_bc}: {error:?}");
+        assert_eq!(
+            renderer.texture_residency().full_bytes,
+            full_bytes,
+            "BC {supports_bc}: 8x8 BC1's one level, or RGBA8 8x8 to 1x1"
+        );
+        let [red, green, blue] = dominant_pixels(&pixels);
+        assert!(
+            red > 500 && green == 0 && blue == 0,
+            "BC {supports_bc}: {red}/{green}/{blue}"
+        );
+    }
+}
+
+/// A 6x6 Basis base, partial blocks, is never uploaded as its BC7: it draws its red level 0 on any adapter.
+#[test]
+fn a_partial_block_basis_cube_draws_on_any_adapter() {
+    let Some(mut gpu) = bc_gpu() else {
+        return;
+    };
+    let scene = fixture_scene("cube_basisu_partial_blocks.gltf");
+    for supports_bc in [true, false] {
+        gpu.supports_bc = supports_bc;
+        let (error, pixels) = render_scene(&gpu, &scene);
+        assert!(error.is_none(), "BC {supports_bc}: {error:?}");
+        let [red, green, blue] = dominant_pixels(&pixels);
+        assert!(
+            red > 500 && green + blue <= red / 50,
+            "BC {supports_bc}: the red level 0 must show up close, got {red}/{green}/{blue}"
+        );
+    }
+}
+
+/// An animated WebP draws its first frame, a red and a blue half, and none of its green second frame.
+#[test]
+fn an_animated_webp_cube_draws_its_first_frame() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let scene = fixture_scene("cube_webp_animated.gltf");
+    let texture = &scene.primitives[0]
+        .material
+        .base_color_texture
+        .as_ref()
+        .expect("the WebP is the base colour")
+        .texture;
+    assert_eq!((texture.width, texture.height), (16, 16));
+    assert_eq!(&texture.rgba8[..4], [255, 0, 0, 255]);
+    assert_eq!(&texture.rgba8[15 * 4..16 * 4], [0, 0, 255, 255]);
+    let (error, pixels) = render_scene(&gpu, &scene);
+    assert!(error.is_none(), "validation failed: {error:?}");
+    let [red, green, blue] = dominant_pixels(&pixels);
+    assert!(
+        red > 200 && blue > 200 && green == 0,
+        "the first frame's halves, not the green second frame: {red}/{green}/{blue}"
     );
 }
 

@@ -22,6 +22,41 @@ on 2026-09-15, verbatim. Nothing was deleted.
   empty `peers`, no CORS on the page and none for an unlisted origin; it fails when the handler ignores the
   list. 272 observant tests and clippy are green.
 
+### Fixed (2026-11-28, texture ingest's last renderer differences: BeschleunigerBallett's BACKLOG)
+
+- **Both renderers build a KTX2's chain the same way.** `render::texture::material_chain` takes the adapter as a
+  `levels::BlockSupport`, as `levels::ktx2_chain` does for the C++ engine, and
+  `a_ktx2_chain_is_the_one_the_cpp_engine_s_loader_builds` compares the two for every KTX2 fixture under six support
+  sets and both colour spaces, the colour space the engine uploads in included. Two differences went the C++
+  engine's way, one the WebGPU renderer's:
+  - A Basis base of partial blocks keeps the file's levels, the encoder's mips, transcoded straight to RGBA8; the
+    WebGPU renderer box-filtered its level 0. `KHR_texture_basisu` requires whole blocks, but both loaders accept
+    such a file. `basis::transcode_basis` now keeps BC7 and the source for any base, and the upload sends a
+    partial-block base straight to RGBA8 on every adapter, never as BC7.
+  - A decoded chain shorter than full (BCn on an adapter without BC, a short Basis payload transcoded straight) is
+    completed to 1x1 by halving its last level, as glTF asks of a texture a mipmapping sampler reads; the WebGPU
+    renderer kept it short. `levels::completed_levels` is `complete_chain` with its levels kept apart, over the new
+    `levels::halvings_below`. A block chain keeps the file's levels in both. A decoded BC chain past the device's
+    side starts at its first level that fits, as the C++ engine's does, instead of halving level 0.
+  - A BC5 in a colour slot reads linear where it is decoded too, as its blocks do on a device that samples them:
+    BC5 has no sRGB variant (`CompressedFormat::has_srgb`). The C++ engine's chain halved it in sRGB and uploaded
+    it sRGB, so the texture looked different on a device without BC; `levels::rgba8_chain` now halves it linearly
+    and `levels::reads_srgb` labels the bridge's slot linear.
+- **An animated WebP is its first frame** in both loaders, on a transparent canvas, as `image-webp` composites it and
+  a browser's `createImageBitmap` takes it; `image_decode` logs a warning, since `EXT_texture_webp` asks for no
+  `ANIM` chunk. A refusal would lose the texture wherever the file has no fallback.
+- **The WebGPU renderer's CPU chain budget counts only what a chain built itself** (`LevelChain::owned_bytes`): a
+  level it shares with the scene's image, an RGBA8 base or stored blocks, is the scene's, so `cpu_bytes`, the budget
+  and a dropped chain's rebuild cost leave it out. Sixteen 256-texel RGBA8 chains count 1.3 MiB, not 5.3; a stored
+  BC chain counts nothing and is never dropped (`a_chain_s_shared_levels_cost_the_cpu_budget_nothing`).
+- Fixtures: `rgb_levels_6x6_uastc.ktx2` (6x6, red, green and blue levels; `basis.rs`'s `uastc_ktx2`, which a test
+  checks byte for byte), `animated_two_frames.webp` (16x16, lossless, a red and blue first frame then green; ffmpeg
+  8.0.1's libwebp_anim, `-lossless 1 -loop 0`), `rg_two_levels_bc5.ktx2` (8x8 BC5, two of four levels, a red
+  checker over green 64, then over green 192, so no level is a box filter of the one above; written by hand, its
+  blocks checked by `ktx2_loader`'s tests), and the cubes `cube_basisu_partial_blocks.gltf`,
+  `cube_ktx2_bc1_one_level.gltf` (`red_bc1.ktx2`'s one level), `cube_ktx2_bc5_base_colour.gltf` and
+  `cube_webp_animated.gltf`.
+
 ### Changed (2026-11-28, the Pester suites run on Linux too)
 
 - **Linux x64's `pester-linux` job runs `scripts/windows/tests` in the image** through the hub's

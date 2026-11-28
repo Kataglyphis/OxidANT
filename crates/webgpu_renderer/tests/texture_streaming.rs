@@ -469,7 +469,9 @@ fn chains_past_the_cpu_budget_rebuild_and_render_identically() {
         return;
     };
     let scene = sixteen_cubes(|i| checker(256, (i * 15) as u8));
-    let budget = 3 * rgba8_chain_bytes(256);
+    // A chain holds the levels below the image's base, which it shares.
+    let chain = rgba8_chain_bytes(128);
+    let budget = 3 * chain;
     let bounded = TextureStreaming {
         cpu_bytes: budget,
         ..TextureStreaming::INTERACTIVE
@@ -478,10 +480,7 @@ fn chains_past_the_cpu_budget_rebuild_and_render_identically() {
     let residency = renderer.texture_residency();
     assert_eq!(residency.cpu_bytes, budget, "three of sixteen chains stay");
     let mut unbounded = renderer_with(&gpu, &scene, TextureStreaming::INTERACTIVE);
-    assert_eq!(
-        unbounded.texture_residency().cpu_bytes,
-        16 * rgba8_chain_bytes(256)
-    );
+    assert_eq!(unbounded.texture_residency().cpu_bytes, 16 * chain);
 
     // Every texture steps to its finest: thirteen of them from a rebuilt chain.
     renderer.finish_texture_streaming(&gpu);
@@ -505,6 +504,58 @@ fn chains_past_the_cpu_budget_rebuild_and_render_identically() {
     // Off keeps no chain at all.
     let off = renderer_with(&gpu, &scene, TextureStreaming::default());
     assert_eq!(off.texture_residency().cpu_bytes, 0);
+}
+
+/// A chain's levels shared with the scene's image cost the CPU budget nothing: an RGBA8 base, stored BC blocks.
+#[test]
+fn a_chain_s_shared_levels_cost_the_cpu_budget_nothing() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let scene = sixteen_cubes(|i| checker(256, (i * 15) as u8));
+    let below_base = rgba8_chain_bytes(128);
+    let exact = TextureStreaming {
+        cpu_bytes: 16 * below_base,
+        ..TextureStreaming::INTERACTIVE
+    };
+    let mut renderer = renderer_with(&gpu, &scene, exact);
+    let residency = renderer.texture_residency();
+    assert_eq!(residency.streaming, 16);
+    assert_eq!(
+        residency.cpu_bytes,
+        16 * below_base,
+        "every chain fits a budget of the levels below the bases"
+    );
+    renderer.finish_texture_streaming(&gpu);
+    assert_eq!(
+        renderer.texture_residency().regenerated,
+        0,
+        "none was dropped"
+    );
+
+    if !gpu.supports_bc {
+        assert!(
+            !GpuContext::gpu_required(),
+            "KATAGLYPHIS_REQUIRE_GPU is set but the adapter lacks TEXTURE_COMPRESSION_BC"
+        );
+        eprintln!("SKIP: the stored-block half needs TEXTURE_COMPRESSION_BC");
+        return;
+    }
+    let blocks = sixteen_cubes(|i| bc1_noise(256, i));
+    let none = TextureStreaming {
+        cpu_bytes: 0,
+        ..TextureStreaming::INTERACTIVE
+    };
+    let mut renderer = renderer_with(&gpu, &blocks, none);
+    let residency = renderer.texture_residency();
+    assert_eq!(residency.streaming, 16);
+    assert_eq!(
+        residency.cpu_bytes, 0,
+        "a stored chain is the image's blocks"
+    );
+    renderer.finish_texture_streaming(&gpu);
+    let after = renderer.texture_residency();
+    assert_eq!((after.streaming, after.regenerated), (0, 0), "{after:?}");
 }
 
 /// The measured effect of eviction: sixteen 1024-texel textures, all resident, then the camera flies away.
