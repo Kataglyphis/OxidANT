@@ -348,8 +348,17 @@ checks the exports against `vision_core` on the host, and the class names agains
   and on the ESP32 frame codec (any split into reads, noise before a frame, a single bit
   error) in `crates/esp32-protocol/tests/framing.rs`; and on `load_flat`, the glTF loader
   BeschleunigerBallett's engine calls, over mutated copies of ten self-contained renderer
-  assets (512 per run, `crates/assets/tests/flat.rs`): a mutant is an error or consistent arrays.
-  There is no `cargo-fuzz`/libFuzzer target.
+  assets (512 per run, `crates/assets/tests/flat.rs`), and in a second property over the three meshopt fixtures
+  below: a mutant is an error or consistent arrays. There is no `cargo-fuzz`/libFuzzer target.
+- `EXT_meshopt_compression`: `crates/assets/tests/meshopt.rs` reads gltfpack 1.3's output, built from
+  `meshoptimizer-1.3.tar.gz` (SHA-256 `d50a0b5e1323ba4379cdb32f89436c20652b7393445f8e18c88ae64445b67b77`), next to
+  its original: `gltfpack -i cube.gltf -o cube_meshopt.glb -noq -kv -c`,
+  `gltfpack -i cube.gltf -o cube_meshopt_filters.glb -kv -cc -vpf` and
+  `gltfpack -i skinned_bar.gltf -o skinned_bar_meshopt.glb -kv -cc` (`-kv` keeps every attribute).
+  `meshopt_codec_reference.json` holds the same release's own streams over fixed inputs, from
+  `meshopt_encodeIndexBuffer` at index versions 0 and 1, `meshopt_encodeIndexSequence` at both and
+  `meshopt_encodeVertexBufferLevel` at version 0, each with what the matching decoder returns. Neither tool is
+  committed.
 
 - Script suites: `scripts/linux/tests/test-*.sh`. A harness suite sources `lib-suite.sh`
   (`tests_dir`, `work`, `suite_run`); the GPU check suites source `lib-fake-gpu.sh`

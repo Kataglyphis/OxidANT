@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 
+use crate::meshopt;
+
 /// A regular file's bytes; a FIFO, device or directory is refused unopened, since reading one can block forever.
 pub(crate) fn read_regular_file(path: &Path) -> anyhow::Result<Vec<u8>> {
     require_regular_file(path)?;
@@ -86,17 +88,26 @@ pub(crate) fn confined_path(base: &Path, relative: &str) -> anyhow::Result<PathB
     Ok(file)
 }
 
-/// `gltf::import_buffers` with its GLB chunk, data URIs, padding and byteLength check, but a file must be a regular
-/// one inside `base`: gltf's reader opens any path, and panics on a percent escape that is not UTF-8.
+/// `gltf::import_buffers` with its GLB chunk, data URIs, padding, byteLength check and meshopt views, but a file must
+/// be a regular one inside `base`: gltf's reader opens any path, and panics on a percent escape that is not UTF-8.
 pub(crate) fn import_buffers(
     document: &gltf::Document,
     base: Option<&Path>,
     mut blob: Option<Vec<u8>>,
 ) -> anyhow::Result<Vec<gltf::buffer::Data>> {
+    let plan = meshopt::Plan::new(document)?;
     let mut buffers = Vec::with_capacity(document.buffers().len());
+    let mut placeholders = vec![false; document.buffers().len()];
     for buffer in document.buffers() {
         let index = buffer.index();
-        let mut data = match buffer.source() {
+        let source = buffer.source();
+        let uri_less = matches!(source, gltf::buffer::Source::Bin);
+        if plan.skips(index) || (uri_less && blob.is_none() && plan.backs(index)) {
+            placeholders[index] = true;
+            buffers.push(gltf::buffer::Data(Vec::new()));
+            continue;
+        }
+        let mut data = match source {
             gltf::buffer::Source::Bin => blob.take().context("no GLB binary chunk is left for it"),
             gltf::buffer::Source::Uri(uri) => uri_bytes(base, uri),
         }
@@ -112,6 +123,7 @@ pub(crate) fn import_buffers(
         );
         buffers.push(gltf::buffer::Data(data));
     }
+    plan.decode(document, &mut buffers, &placeholders)?;
     Ok(buffers)
 }
 

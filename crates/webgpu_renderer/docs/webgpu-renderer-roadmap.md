@@ -60,7 +60,8 @@ Small, high-value items that make arbitrary glTF files from the wild look right.
 | ✅ Drag-and-drop model loading | M | Done 2026-07-18 for native; web File API drop zone done 2026-07-22 (`3bc5400`): browser drag-and-drop via the DOM File API (winit-web never delivers `DroppedFile`), first dropped `.glb` read async and uploaded with native-viewer semantics |
 | ✅ Multiple cameras from glTF | S | Done 2026-07-18: parsed into `CpuScene::cameras` (yfov/znear/zfar + node pose). Since 2026-11-15 a load starts the orbit camera at `scenes[0].extras.active_camera`, else at the first camera |
 | ✅ `KHR_mesh_quantization` | S | Done 2026-11-22: integer positions, normals, tangents, texcoords and morph deltas, `normalized` or not, read by `kataglyphis_assets`' `attributes::read_f32` for both loaders |
-| `EXT_meshopt_compression` / Draco | L | Decompression on load; meshopt first (pure Rust decoder exists) |
+| ✅ `EXT_meshopt_compression` | L | Done 2026-11-27: `kataglyphis_assets`' own safe-Rust decoder (`meshopt_codec.rs`: attributes, triangles, index sequences; octahedral, quaternion and exponential filters) writes each compressed view into its fallback or placeholder buffer at import, for both loaders; `KHR_meshopt_compression` is not read |
+| `KHR_draco_mesh_compression` | L | Decompression on load |
 
 ## Phase C — Lighting & atmosphere (C++ engine parity)
 

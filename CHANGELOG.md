@@ -13,6 +13,29 @@ on 2026-09-15, verbatim. Nothing was deleted.
 
 ## [Unreleased]
 
+### Added (2026-11-28, `EXT_meshopt_compression`: BeschleunigerBallett plan N4)
+
+- **`kataglyphis_assets` reads `EXT_meshopt_compression`**, gltfpack's `-c` and `-cc` output, for both renderers and
+  with no new crate. `meshopt_codec.rs` decodes the extension's three bitstreams (attributes, vertex codec version 0;
+  triangles, index codec versions 0 and 1; index sequences) and three filters (octahedral, quaternion, exponential)
+  in safe Rust, as meshoptimizer's scalar decoder does, whose MIT text `packaging/cargo-license-policy.json` now ships
+  with the crate. `meshopt.rs` checks every compressed view against the extension's layout rules before anything is
+  read or allocated, then `files::import_buffers` decodes each in place into its parent's range: of a `fallback`
+  buffer, which it never reads, of a URI-less placeholder (after the GLB chunk), or of a buffer with data, which it
+  overwrites. A stream too short for its elements, one that ends early or runs on, a fallback read uncompressed or
+  used as a stream, and a placeholder declaring more than its views decode (each rounded up to 16 bytes) fail the
+  load; one file's views decode to at most 1 GiB, held once. `KHR_meshopt_compression` (`-cz`) is not read.
+- Fixtures from gltfpack 1.3, every one with `-kv`: `cube_meshopt.glb` (`cube.gltf`, `-noq -kv -c`),
+  `cube_meshopt_filters.glb` (`-kv -cc -vpf`) and `skinned_bar_meshopt.glb` (`skinned_bar.gltf`, `-kv -cc`); and
+  `meshopt_codec_reference.json`, meshoptimizer 1.3's own streams for both index codec versions, index sequences in
+  both versions and widths, and attribute streams over several blocks, with what its decoder makes of them
+  ([testing.md](docs/testing.md#where-the-suites-live)). `tests/meshopt.rs` matches each triangle with the original's
+  (floats exactly, the filters within their steps) and the keyframes with its rotations, decodes every reference
+  stream to meshoptimizer's bytes, round-trips the attribute and sequence codecs through a test encoder, holds the
+  filters to the specification's pseudo-code within a unit, loads the cube with its views decoded into the buffer
+  that holds their streams and with its indices as a sequence, refuses twelve broken views, and fuzzes the decoders
+  and the fixtures' streams; `load_flat`'s fuzz target runs over the three fixtures too.
+
 ### Added (2026-11-28, the hub's usable-CPU cases replayed)
 
 - `crates/core/tests/usable_cpus.rs` replays the hub's `shared/contracts/usable-cpus.json` (hub CON304) through
