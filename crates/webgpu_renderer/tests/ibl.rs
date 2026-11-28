@@ -2,7 +2,8 @@
 //! A dropped sin(theta) solid-angle weight doubles irradiance yet looks plausible on a rendered frame.
 
 use kataglyphis_webgpu_renderer::render::ibl::{
-    BrdfLut, IblEnvironment, BRDF_LUT_SIZE, IRRADIANCE_SIZE, PREFILTER_MIPS, PREFILTER_SIZE,
+    BrdfLut, IblEnvironment, BRDF_LUT_SIZE, ENV_SIZE, IRRADIANCE_SIZE, PREFILTER_MIPS,
+    PREFILTER_SIZE,
 };
 use kataglyphis_webgpu_renderer::{
     decode_hdr, load_gltf, EquirectImage, ForwardRenderer, GpuContext, OrbitCamera,
@@ -716,22 +717,38 @@ fn a_photo_skys_saturated_sun_is_left_out_of_every_map() {
     }
 }
 
+/// The photo sky's white disk over the glow below it, which saturates green and blue out to 16 degrees.
+fn photo_sun_over_its_glow() -> EquirectImage {
+    let sky = [0.5f32, 0.7, 1.0];
+    let glow = [0.9f32, SATURATED, SATURATED];
+    let sun = unit(PHOTO_SUN);
+    panorama((256, 128), |dir| match angle_degrees(dir, sun) {
+        a if a < 4.0 => [SATURATED; 3],
+        a if a < 16.0 && dir[1] < sun[1] => glow,
+        _ => sky,
+    })
+}
+
+/// The direction `degrees` below `sun` on its meridian.
+fn below_sun(sun: [f32; 3], degrees: f32) -> [f32; 3] {
+    let level = unit([sun[0], 0.0, sun[2]]);
+    let elevation = sun[1].asin() - degrees.to_radians();
+    [
+        level[0] * elevation.cos(),
+        elevation.sin(),
+        level[2] * elevation.cos(),
+    ]
+}
+
 /// Below the photo sky's white disk a glow saturates green and blue, nearly as bright in luminance (5.9 against
-/// 7.2): the search keys on the dimmest channel, so it centres on the disk, and the glow past 10 degrees stays.
+/// 7.2): the search keys on the dimmest channel, so it centres on the disk, and the glow past 12 degrees stays.
 #[test]
 fn a_photo_skys_glow_does_not_pull_the_search_off_its_sun() {
     let Some(gpu) = GpuContext::headless_or_skip() else {
         return;
     };
-    let sky = [0.5f32, 0.7, 1.0];
-    let glow = [0.9f32, SATURATED, SATURATED];
     let sun = unit(PHOTO_SUN);
-    let image = panorama((256, 128), |dir| match angle_degrees(dir, sun) {
-        a if a < 4.0 => [SATURATED; 3],
-        a if a < 13.0 && dir[1] < sun[1] => glow,
-        _ => sky,
-    });
-    let environment = IblEnvironment::bake(&gpu, &image);
+    let environment = IblEnvironment::bake(&gpu, &photo_sun_over_its_glow());
     let mask = environment.read_sun_mask(&gpu);
     let off = angle_degrees(mask.direction, sun);
     eprintln!(
@@ -745,18 +762,8 @@ fn a_photo_skys_glow_does_not_pull_the_search_off_its_sun() {
 
     let (face, texel) = cube_texel(sun, PREFILTER_SIZE);
     let mirror = environment.read_prefiltered_face(&gpu, face, 0)[texel];
-    // 11.5 degrees below the sun, in the glow and outside the disk the bake replaces.
-    let below = {
-        let a = 11.5f32.to_radians();
-        let level = unit([sun[0], 0.0, sun[2]]);
-        let elevation = sun[1].asin() - a;
-        [
-            level[0] * elevation.cos(),
-            elevation.sin(),
-            level[2] * elevation.cos(),
-        ]
-    };
-    let (face, texel) = cube_texel(below, PREFILTER_SIZE);
+    // 13 degrees below the sun, in the glow and past the feather where the bake's cap ends.
+    let (face, texel) = cube_texel(below_sun(sun, 13.0), ENV_SIZE);
     let kept = environment.read_environment_face(&gpu, face, 0)[texel];
     eprintln!("a mirror facing the sun sees {mirror:?}; the glow below it keeps {kept:?}");
     assert!(
@@ -767,6 +774,62 @@ fn a_photo_skys_glow_does_not_pull_the_search_off_its_sun() {
         kept[1] > 0.9 * SATURATED,
         "the glow outside the disk lost its light: {kept:?}"
     );
+}
+
+/// The cap fades out from the disk's 10 degrees to the ring's 12, so the glow below the photo's sun climbs back to its
+/// own radiance there: a cap that stopped at 10 degrees drew a circle on a mirror facing the sun.
+#[test]
+fn the_mask_fades_into_a_photo_skys_glow_across_its_feather() {
+    let Some(gpu) = GpuContext::headless_or_skip() else {
+        return;
+    };
+    let environment = IblEnvironment::bake(&gpu, &photo_sun_over_its_glow());
+    let mask = environment.read_sun_mask(&gpu);
+    let faces: Vec<_> = (0..6)
+        .map(|f| environment.read_environment_face(&gpu, f, 0))
+        .collect();
+    let green = |degrees: f32| {
+        let (face, texel) = cube_texel(below_sun(unit(mask.direction), degrees), ENV_SIZE);
+        faces[face as usize][texel][1]
+    };
+    // Half the ring's taps lie in the glow, so inside the disk the glow's green comes down to about 4.
+    let ring = mask.ring[1];
+    let walk: Vec<(f32, f32)> = (0..=22)
+        .map(|step| 8.5 + 0.25 * step as f32)
+        .map(|degrees| (degrees, green(degrees)))
+        .collect();
+    eprintln!("the glow's green below the found sun, ring {ring}: {walk:?}");
+    assert!(
+        ring < 0.7 * SATURATED,
+        "the ring {ring} is the glow: the test cannot tell a cap from none"
+    );
+    for &(degrees, g) in &walk {
+        if degrees <= 9.5 {
+            assert!(
+                (g - ring).abs() < 0.03 * ring,
+                "{degrees} degrees, inside the disk: {g} is not the ring's {ring}"
+            );
+        } else if degrees >= 13.0 {
+            assert!(
+                g > 0.97 * SATURATED,
+                "{degrees} degrees, past the feather: {g} is not the glow's {SATURATED}"
+            );
+        }
+    }
+    let back = (green(11.0) - ring) / (SATURATED - ring);
+    assert!(
+        (0.1..0.9).contains(&back),
+        "11 degrees off, in the feather, the cap should be partly lifted: {back} of the way back to the glow"
+    );
+    // Half-float storage rounds 7.24 to within 0.004.
+    for pair in walk.windows(2) {
+        assert!(
+            pair[1].1 >= pair[0].1 - 0.01,
+            "the feather dips from {:?} to {:?}",
+            pair[0],
+            pair[1]
+        );
+    }
 }
 
 /// A real HDR's sun outshines a photo's ten thousand times; the bake leaves it out the same way and stays finite.

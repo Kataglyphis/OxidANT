@@ -18,6 +18,8 @@ from shader_vector_format import (
 )
 
 PHOTO_SUN = unit(0.6248, 0.6769, 0.3891)
+# The search's direction, and sun_masked after it: the feather spans 0.0067 of the cosine, so it magnifies a rounding.
+SEARCHED = (1e-4, 1e-3)
 
 
 def sky_of(i: Values) -> ss.DiskSky:
@@ -52,7 +54,17 @@ def sun_mask_cases() -> list[tuple[str, Values]]:
         ("a photo sky's saturated sun is found, and a tap at its centre takes the ring", {}),
         ("a tap 20 degrees off the sun keeps its radiance", {"dir": turned(PHOTO_SUN, 20.0)}),
         ("a tap 9.5 degrees off the sun's centre is inside the disk", {"dir": turned(PHOTO_SUN, 9.5)}),
-        ("a tap 10.5 degrees off the sun's centre is outside it", {"dir": turned(PHOTO_SUN, 10.5)}),
+        ("a tap 10.5 degrees off the sun's centre starts the feather, still mostly the ring",
+         {"dir": turned(PHOTO_SUN, 10.5)}),
+        ("a tap 11 degrees off the sun's centre is about halfway back to its own radiance",
+         {"dir": turned(PHOTO_SUN, 11.0)}),
+        ("a tap 11.5 degrees off the sun's centre is mostly its own radiance", {"dir": turned(PHOTO_SUN, 11.5)}),
+        ("a tap 12.5 degrees off the sun's centre is past the feather and keeps its radiance",
+         {"dir": turned(PHOTO_SUN, 12.5)}),
+        ("a tap in the feather: only the channels over the ring's fade back", {"radiance": [9.0, 0.3, 2.0],
+                                                                               "dir": turned(PHOTO_SUN, 11.0)}),
+        ("a tap in the feather darker than the ring keeps its radiance", {"radiance": [0.1, 0.2, 0.3],
+                                                                          "dir": turned(PHOTO_SUN, 11.0)}),
         ("an HDR sun far brighter than a photo's", {"sky": [1.0, 1.0, 1.0], "disk": [5.0e4, 5.0e4, 5.0e4],
                                                    "radiance": [5.0e4, 5.0e4, 5.0e4]}),
         ("a tap inside the disk: each channel comes down to the ring's", {"radiance": [9.0, 0.3, 2.0]}),
@@ -80,8 +92,8 @@ def sun_mask_cases() -> list[tuple[str, Values]]:
 
 MODULES = [
     Module("sun_mask", ports("sky:3 disk:3 disk_dir:3 disk_cos radiance:3 dir:3"), [
-        out("find_sun.dir", 3, (1e-4, 1e-3)), out("find_sun.ring", 3, CHAINED), out("sun_masked", 3, CHAINED),
+        out("find_sun.dir", 3, SEARCHED), out("find_sun.ring", 3, CHAINED), out("sun_masked", 3, SEARCHED),
         out("sun_mask_level", 1, SMOOTH), out("sun_search_tangent", 3, SMOOTH),
     ], evaluate_sun_mask, sun_mask_cases(), {
-        "sun found", "no sun", "inside the mask", "outside the mask", "at the pole", "disk tap"}),
+        "sun found", "no sun", "inside the mask", "in the feather", "outside the mask", "at the pole", "disk tap"}),
 ]

@@ -229,6 +229,11 @@ def saturate(x: Real) -> Real:
     return clamp(x, 0.0, 1.0)
 
 
+def smoothstep(edge0: Real, edge1: Real, x: Real) -> Real:
+    t = clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0)
+    return t * t * (3.0 - 2.0 * t)
+
+
 # ---- common/brdf_energy_fit.slang: generated, so its coefficients are read and its evaluation mirrored ----
 
 FIT_SOURCE = Path(__file__).resolve().parents[1] / "shaders" / "common" / "brdf_energy_fit.slang"

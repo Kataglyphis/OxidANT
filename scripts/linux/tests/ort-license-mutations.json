@@ -954,5 +954,13 @@
   "replace": " --target wasm32-unknown-unknown || return $?\n",
   "test": "bash scripts/linux/tests/test-cargo-target.sh",
   "why": "The browser checks grade the release profile, as the sites ship it, and bind the module from release/."
+ },
+ {
+  "id": "consumer.oxidant-sun-mask-hard-edge",
+  "target": "scripts/shader_model_sun.py",
+  "find": "    feather = smoothstep(real(SUN_MASK_RING_COS), real(SUN_MASK_COS_RADIUS), dot(d, mask_dir))",
+  "replace": "    feather = real(1.0 if dot(d, mask_dir).v > SUN_MASK_COS_RADIUS else 0.0)",
+  "test": "bash scripts/linux/tests/test-shader-vectors.sh",
+  "why": "The vectors both renderers check fade the sun mask's cap out from 10 to 12 degrees, or a mirror shows a circle."
  }
 ]

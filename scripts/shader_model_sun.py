@@ -9,11 +9,13 @@ from shader_model import (
     cos,
     cross,
     dot,
+    lerp,
     normalize,
     real,
     rmax,
     rmin,
     sin,
+    smoothstep,
     visit,
 )
 
@@ -95,8 +97,7 @@ def find_sun(sky: DiskSky) -> tuple[Vec, Vec]:
 
 
 def sun_masked(radiance: Vec, d: Vec, mask_dir: Vec, ring: Vec) -> Vec:
-    if below(SUN_MASK_COS_RADIUS, dot(d, mask_dir), "the mask's edge"):
-        visit("inside the mask")
-        return Vec(*(rmin(a, b) for a, b in zip(radiance.c, ring.c, strict=True)))
-    visit("outside the mask")
-    return radiance
+    feather = smoothstep(real(SUN_MASK_RING_COS), real(SUN_MASK_COS_RADIUS), dot(d, mask_dir))
+    # The blend is continuous at both edges, so where a tap falls only names the case.
+    visit("inside the mask" if feather.v >= 1.0 else "in the feather" if feather.v > 0.0 else "outside the mask")
+    return lerp(radiance, Vec(*(rmin(a, b) for a, b in zip(radiance.c, ring.c, strict=True))), feather)

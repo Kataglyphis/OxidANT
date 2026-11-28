@@ -4,7 +4,7 @@ import constants;
 
 // The disk the bake replaces, 10 degrees: a photo sky's saturated sun, its rays and its glow.
 static const float SUN_MASK_COS_RADIUS = 0.98480775;
-// The ring at 12 degrees whose mean fills the disk, just outside it.
+// The ring at 12 degrees whose mean fills the disk; the cap fades out between the disk's edge and it.
 static const float SUN_MASK_RING_COS = 0.9781476;
 static const float SUN_MASK_RING_SIN = 0.20791169;
 static const uint SUN_MASK_RING_TAPS = 16u;
@@ -97,8 +97,9 @@ SunMask find_sun<S : ISkyRadiance>(S sky)
     return mask;
 }
 
-// A bake tap's radiance: inside the sun's disk no channel outshines the ring's.
+// A bake tap's radiance: inside the disk no channel outshines the ring; a cap fading out by the ring draws no circle.
 float3 sun_masked(float3 radiance, float3 dir, SunMask mask)
 {
-    return dot(dir, mask.dir) > SUN_MASK_COS_RADIUS ? min(radiance, mask.ring) : radiance;
+    float feather = smoothstep(SUN_MASK_RING_COS, SUN_MASK_COS_RADIUS, dot(dir, mask.dir));
+    return lerp(radiance, min(radiance, mask.ring), feather);
 }

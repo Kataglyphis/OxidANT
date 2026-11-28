@@ -159,9 +159,11 @@ both path tracers' camera misses read.
 with it (BeschleunigerBallett's owner, 2026-11-25). `ibl.slang` draws the environment cube twice: `fs_find_sun`
 reads the first one's mips into a 2x1 target, the sun's direction and the ring around it, and the second
 `fs_equirect_to_cube` or `fs_skybox_to_cube` (`source_resolution.y` 1) brings every channel of a tap within 10
-degrees of that direction down to the ring's. `find_sun` takes the brightest cell of a 10-degree grid on the
-8-texel mip, where a sunlit cloud stays below the sun's glow, centres it twice on what outshines half of it on the
-32-texel mip, and averages 16 taps at 12 degrees; a disk that does not outshine that ring three times is no sun
+degrees of that direction down to the ring's. From 10 to 12 degrees `sun_masked` fades that cap out (a smoothstep
+in the cosine), so a photo's glow that outshines the ring climbs back to its own radiance instead of drawing a
+circle on a mirror. `find_sun` takes the brightest cell of a 10-degree grid on the 8-texel mip, where a sunlit
+cloud stays below the sun's glow, centres it twice on what outshines half of it on the 32-texel mip, and averages
+16 taps at 12 degrees; a disk that does not outshine that ring three times is no sun
 (BeschleunigerBallett's photo sky's does 12 times, the gradient's horizon 1.3). Brightness is a texel's dimmest
 channel: a sun outshines its sky in all three, and below that photo's white disk a glow saturates green and blue,
 whose luminance pulled the search 7 degrees off the disk. It searches the sky, not the Sun's direction: that
